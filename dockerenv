@@ -1,0 +1,2 @@
+OS_API__AUTH_STRATEGY=noauth2
+DB_SYNC=True

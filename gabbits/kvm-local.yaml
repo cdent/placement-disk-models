@@ -1,0 +1,118 @@
+# This file gives a base case of how a kvm or qemu -based
+# compute node that only uses local disk would use disk.
+# This provides a foundation for comparison.
+
+# Set default headers used on every request.
+defaults:
+    # Uncomment this if you want to see the headers and and bodies
+    # of requests and responses.
+    # verbose: True
+    request_headers:
+        accept: application/json
+        content-type: application/json
+        x-auth-token: admin
+        openstack-api-version: placement latest
+
+# This an ordered sequence. By default, if a test fails, the tests
+# continue. Created resources are cleaned up at the end. If you want
+# to fail fast instead, pass `--failfast` to `gabbi-run` but you'll
+# be left with orphaned resources in the container.
+tests:
+
+- name: create compute node
+  POST: /resource_providers
+  data:
+      name: kvm-node
+      uuid: 3491834b-7c8c-4d96-ac87-6e2ab9fd1ea6
+
+# This is a single compute node with local disk. We reserve
+# some inventory for operation of the compute node itself but
+# report the real physical totals. All of the below use an
+# allocation_ratio of 1.0 for easy maths.
+- name: set compute inventory
+  PUT: /resource_providers/3491834b-7c8c-4d96-ac87-6e2ab9fd1ea6/inventories
+  data:
+      inventories:
+          DISK_GB:
+              total: 1024
+              reserved: 100
+          MEMORY_MB:
+              total: 49152
+              reserved: 8192
+          VCPU:
+              total: 48
+              reserved: 6
+      resource_provider_generation: $HISTORY['create compute node'].$RESPONSE['$.generation']
+
+# Now we have a compute node that we want to be able put instances
+# on. We can request a filtered list of resource providers:
+- name: list rps 1
+  GET: /resource_providers?resources=VCPU:1,DISK_GB:512,MEMORY_MB:256
+  response_json_paths:
+      # There's one resource provider being returned (because
+      # there's only one).
+      $.resource_providers.`len`: 1
+      $.resource_providers[0].uuid: 3491834b-7c8c-4d96-ac87-6e2ab9fd1ea6
+
+# If we ask for something that won't fit, we get zero back (while
+# there is 1024 disk in total, 100 is reserved, so we cannot get
+# 1024):
+- name: list rps 0
+  GET: /resource_providers?resources=VCPU:1,DISK_GB:1024,MEMORY_MB:256
+  response_json_paths:
+      # There's one resource provider being returned (because
+      # there's only one).
+      $.resource_providers.`len`: 0
+
+# The above is what the nova-schedule in ocata does to find target hosts.
+# More modern releases use allocation_candidates, which streamlines
+# the handling and provides a more direct way to claim the selected
+# resources.
+# See: https://developer.openstack.org/api-ref/placement/#allocation-candidates
+- name: get 1 allocation candidate
+  GET: /allocation_candidates?resources=VCPU:1,DISK_GB:512,MEMORY_MB:256
+  response_json_paths:
+      # There's one allocation request and one provider summary
+      $.allocation_requests.`len`: 1
+      $.provider_summaries.`len`: 1
+      # The resources in the allocation request are what we asked
+      # for.
+      $.allocation_requests..['3491834b-7c8c-4d96-ac87-6e2ab9fd1ea6'].resources:
+          DISK_GB: 512
+          VCPU: 1
+          MEMORY_MB: 256
+
+# That allocation request is used to claim the resources for the
+# instance.
+- name: allocate instance
+  # The uuid here is the uuid of the instance.
+  PUT: /allocations/693a2266-18de-4cf7-a0f3-615de9a72490
+  data:
+      allocations: $RESPONSE['$.allocation_requests[0].allocations']
+      # latest microversions required user and proj identifiers
+      user_id: 913713bc-1d50-4f59-b86b-5d312773cddb
+      project_id: a8753859-7471-47a4-947b-dd3162191e6a
+      # When there are no prior allocations expected for this consumer, the
+      # generation must be declared as null to check that.
+      consumer_generation: null
+  status: 204
+
+# Now, if we try to get more candidates with the same resource
+# sizing, there won't be room because there's less than 512 disk
+# left. At this point the scheduler would have 0 hosts entering
+# the filtering loop and report NoValidHosts.
+- name: get 0 allocation candidate
+  GET: /allocation_candidates?resources=VCPU:1,DISK_GB:512,MEMORY_MB:256
+  response_json_paths:
+      # There's one allocation request and one provider summary
+      $.allocation_requests.`len`: 0
+      $.provider_summaries.`len`: 0
+
+# Cleanup (allocations before resource providers)
+- name: delete allocations
+  DELETE: /allocations/693a2266-18de-4cf7-a0f3-615de9a72490
+  status: 204
+
+- name: delete compute node
+  DELETE: /resource_providers/3491834b-7c8c-4d96-ac87-6e2ab9fd1ea6
+  status: 204

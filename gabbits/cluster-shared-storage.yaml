@@ -8,6 +8,11 @@
 #       cluster1 ---sharing--- store 1 ---sharing--- cluster2      
 # 
 
+# NOTE: Sharing doesn't work on the nova side yet for a variety of
+# reasons. See line 220 (/CI testing for shared store) on
+# https://etherpad.openstack.org/p/nova-ptg-stein and
+# https://bugs.launchpad.net/nova/+bug/1784020
+
 # NOTE: In the code below we use insider knowledge of how resource
 # provider generations work, so we don't have to look back at the
 # resource provider to see how it works. This is not how things

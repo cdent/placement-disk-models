@@ -122,6 +122,22 @@ tests:
       $.allocation_requests[1].allocations.`len`: 2
       $.allocation_requests[2].allocations.`len`: 2
 
+# To demonstrate the functionality, it's also possible to request
+# two separate chunks of disk, on different data stores, by using
+# the number resources concept, and a group isolate policy. Without
+# the isolate policy, the disk will be consumed from the same store.
+# For isolation to work, both disk resource requests must be
+# "numbered".
+- name: request double disk
+  GET: /allocation_candidates?resources=VCPU:1,MEMORY_MB:256&resources1=DISK_GB:500&resources2=DISK_GB:256&group_policy=isolate
+  # Set verbose to see the details of the reponse.
+  # verbose: True
+  response_json_paths:
+      # We expect 6 allocation requests, to get all the combinations
+      # of the 3 data stores. But the same 4 provider summaries.
+      $.allocation_requests.`len`: 6
+      $.provider_summaries.`len`: 4
+
 # Cleanup, child provider first, then root.
 - name: delete store 1
   DELETE: /resource_providers/921fd536-0d9a-4637-a9be-afa875ab89ae

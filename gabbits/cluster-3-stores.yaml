@@ -1,0 +1,140 @@
+# This file creates a single compute node which is associated with a
+# vSphere cluster that is using 3 datastores, over which it has sole
+# access. Because there is a containing relationship (the cluster
+# has within itself 3 datastores) nested resource providers are used
+# here. Note that if the shared modelling (in another file) works,
+# it should also work in this case too, so it is probably the better
+# way to go. This is here for completeness.
+#
+# Looks like this, as one cluster:
+#               
+#                           Compute Node 1
+#                            /    |     \
+#                           /     |      \
+#                       store1  store2  store3
+#
+# When allocations are made against this model the allocations for
+# disk will be specifically against an individal store, not the
+# aggregated sum of the stores.
+
+# Set default headers used on every request.
+defaults:
+    # Uncomment this if you want to see the headers and and bodies
+    # of requests and responses.
+    # verbose: True
+    request_headers:
+        accept: application/json
+        content-type: application/json
+        x-auth-token: admin
+        openstack-api-version: placement latest
+
+tests:
+
+- name: create compute node
+  POST: /resource_providers
+  data:
+      name: cluster1
+      uuid: e2122c70-1ec4-43f7-ad60-d5068f4d974c
+
+- name: create store 1
+  POST: /resource_providers
+  data:
+      name: store 1 
+      uuid: 921fd536-0d9a-4637-a9be-afa875ab89ae
+      parent_provider_uuid: e2122c70-1ec4-43f7-ad60-d5068f4d974c
+
+- name: create store 2
+  POST: /resource_providers
+  data:
+      name: store 2 
+      uuid: 8037b562-f9ad-46f7-8e84-d2c65a405ccf
+      parent_provider_uuid: e2122c70-1ec4-43f7-ad60-d5068f4d974c
+
+- name: create store 3
+  POST: /resource_providers
+  data:
+      name: store 3 
+      uuid: f3fb66cf-733c-49ad-b688-b4f8bbc54848
+      parent_provider_uuid: e2122c70-1ec4-43f7-ad60-d5068f4d974c
+
+# Set inventory on compute node. This will be VCPU and MEMORY, but
+# not disk.
+- name: set compute inventory
+  PUT: /resource_providers/e2122c70-1ec4-43f7-ad60-d5068f4d974c/inventories
+  data:
+      inventories:
+          MEMORY_MB:
+              total: 491520
+              reserved: 8192
+          VCPU:
+              total: 480
+              reserved: 6
+      resource_provider_generation: $HISTORY['create compute node'].$RESPONSE['$.generation']
+
+# Set inventory for each store. A thing to be aware of with this is
+# that if thing provisioning is being used, the actual bytes used on
+# the datastore and the bytes that placement thinks are being used
+# will be different. Placement records what has been requested, so
+# can be much larger. This can be tweaked by using allocation ratios
+# but this may lead to surprises with disk appearing available in
+# placement but not actually being available in the datastore.
+# Another way to manage this might be to dynamically adjust the
+# allocation ratio, max unit, or even total values for the
+# inventory. In the following we don't consider that, and simply set
+# total, meaning that the entire datastore is not only being made
+# available to OpenStack but also as assertion is being made that
+# OpenStack will be the _only_ user of this disk. If that's not the
+# case, reserved should be set.
+- name: set store 1 inventory
+  PUT: /resource_providers/921fd536-0d9a-4637-a9be-afa875ab89ae/inventories
+  data:
+      inventories:
+          DISK_GB:
+              total: 5000
+      resource_provider_generation: $HISTORY['create store 1'].$RESPONSE['$.generation']
+
+- name: set store 2 inventory
+  PUT: /resource_providers/8037b562-f9ad-46f7-8e84-d2c65a405ccf/inventories
+  data:
+      inventories:
+          DISK_GB:
+              total: 15000
+      resource_provider_generation: $HISTORY['create store 2'].$RESPONSE['$.generation']
+
+- name: set store 3 inventory
+  PUT: /resource_providers/f3fb66cf-733c-49ad-b688-b4f8bbc54848/inventories
+  data:
+      inventories:
+          DISK_GB:
+              total: 6000
+      resource_provider_generation: $HISTORY['create store 3'].$RESPONSE['$.generation']
+
+- name: request candidates
+  GET: /allocation_candidates?resources=VCPU:1,DISK_GB:512,MEMORY_MB:256
+  response_json_paths:
+      # There's three allocation requests and 4 provider summaries,
+      # the root/compute provider with each child disk.
+      $.allocation_requests.`len`: 3
+      $.provider_summaries.`len`: 4
+      # Each allocation request should have a length of two
+      # providers:
+      $.allocation_requests[0].allocations.`len`: 2
+      $.allocation_requests[1].allocations.`len`: 2
+      $.allocation_requests[2].allocations.`len`: 2
+
+# Cleanup, child provider first, then root.
+- name: delete store 1
+  DELETE: /resource_providers/921fd536-0d9a-4637-a9be-afa875ab89ae
+  status: 204
+
+- name: delete store 2
+  DELETE: /resource_providers/8037b562-f9ad-46f7-8e84-d2c65a405ccf
+  status: 204
+
+- name: delete store 3
+  DELETE: /resource_providers/f3fb66cf-733c-49ad-b688-b4f8bbc54848
+  status: 204
+
+- name: delete compute node
+  DELETE: /resource_providers/e2122c70-1ec4-43f7-ad60-d5068f4d974c
+  status: 204
